@@ -1,11 +1,10 @@
 // squeek-viewer (web): read-only lookup of a wallet's Squeeks and SQK on Squeekchain (Sepolia testnet).
 // Runs in the browser. It only reads public data over RPC: no wallet connection, no signing, no keys.
 
-// Deployment record from https://docs.squeekchain.com (release squeeks-sepolia-core3-mining6-001).
+import { loadDeployment } from "./deployment.js";
+import { fetchAccount } from "./account.js";
+
 export const CHAIN_ID = 11155111;
-export const NFT = "0x0eAF3E0d40A0a8E5a6Ac030b2459E9FB0B7905c6";
-export const SQK = "0x6872bfa5ccc3e9e440c6c16e5ffdabb8dba4cc76";
-export const MINING = "0x3beE588fC20dE788Bac17d33b41Da7346cb27EC4";
 export const RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com";
 
 const SEL = {
@@ -50,10 +49,14 @@ export function formatUnits(value, decimals) {
 export async function lookup(owner) {
   if ((await rpc("eth_chainId", [])) !== "0x" + CHAIN_ID.toString(16)) throw new Error("RPC is not Sepolia");
 
-  // Sanity check: the NFT contract must point at the mining contract from the deployment record.
+  // Which contracts to read: Squeekchain's live deployment (it has redeployed before), with a built-in fallback.
+  const deployment = await loadDeployment();
+  const { nft: NFT, token: SQK, mining: MINING } = deployment;
+
+  // Sanity check against the chain itself: the NFT contract must point at the mining contract of that deployment.
   const mining = "0x" + (await call(NFT, SEL.mining)).slice(-40);
   if (mining.toLowerCase() !== MINING.toLowerCase()) {
-    throw new Error("Deployment mismatch: SqueekNFT.mining() differs from the published record. Stopping.");
+    throw new Error("Deployment mismatch: SqueekNFT.mining() differs from the deployment record. Stopping.");
   }
 
   const [squeeks, supply, sqk, decimals, symbol] = await Promise.all([
@@ -64,12 +67,23 @@ export async function lookup(owner) {
     call(SQK, SEL.symbol),
   ]);
   const dec = Number(toBig(decimals));
+  const account = await fetchAccount(owner); // display-only details; never throws
   return {
+    account: account.available
+      ? {
+          staked: `${account.counts.staking} staked, ${account.counts.wallet} in wallet`,
+          power: `NFT ${account.power.nft} + SQK ${account.power.sqk}`,
+          claimable: formatUnits(account.claimable, dec),
+          tokens: account.tokens,
+          hasMore: account.hasMore,
+        }
+      : { unavailable: account.reason },
     owner,
     squeeks: toBig(squeeks),
     supply: toBig(supply),
     sqk: formatUnits(toBig(sqk), dec),
     symbol: decodeString(symbol),
+    deployment: deployment.source === "api" ? `live from Squeekchain (${deployment.release})` : "built-in record (API unreachable)",
   };
 }
 
@@ -94,7 +108,15 @@ if (typeof document !== "undefined") {
         ["Wallet", r.owner],
         ["Squeeks owned", `${r.squeeks} (of ${r.supply} in existence)`],
         [`${r.symbol} balance`, r.sqk],
+        ["Contracts", r.deployment],
       ];
+      if (r.account.unavailable) {
+        rows.push(["Details", `unavailable (${r.account.unavailable})`]);
+      } else {
+        rows.push(["Squeeks", r.account.staked], ["Power", r.account.power], [`Claimable ${r.symbol}`, r.account.claimable]);
+        for (const t of r.account.tokens) rows.push([`Squeek #${t.tokenId}`, `level ${t.level}, base power ${t.basePower} (${t.custody})`]);
+        if (r.account.hasMore) rows.push(["More", "more Squeeks exist than shown"]);
+      }
       const dl = document.createElement("dl");
       for (const [k, v] of rows) {
         const dt = document.createElement("dt");

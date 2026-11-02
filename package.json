@@ -1,11 +1,12 @@
 {
   "name": "squeek-viewer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read-only lookup of a wallet's Squeeks, power and SQK on Squeekchain (Sepolia)",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node --test test/deployment.test.js"
   },
   "dependencies": {
     "viem": "^2.56.3"
